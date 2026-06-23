@@ -20,6 +20,7 @@ security = HTTPBearer(auto_error=False)
 
 class SearchRequest(BaseModel):
     query: str
+    near: str | None = None
     filters: dict | None = None
 
 
@@ -399,7 +400,10 @@ async def search(body: SearchRequest, _token: str = Depends(require_auth)):
     target = STATE_DIR / f"{search_id}.json"
     async with httpx.AsyncClient(timeout=180) as client:
         try:
-            r = await client.post(f"{HARV3ST_URL}/api/search", json={"query": body.query})
+            search_payload = {"query": body.query}
+            if body.near:
+                search_payload["near"] = body.near
+            r = await client.post(f"{HARV3ST_URL}/api/search", json=search_payload)
             r.raise_for_status()
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Harv3st error: {e}")
@@ -540,10 +544,15 @@ def index():
       <meta charset="utf-8">
       <title>FormaDigital Pocket</title>
       <script src="https://cdn.tailwindcss.com"></script>
+      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+      <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
       <style>
         .fade { opacity: .6; }
         .analysis { background: #f9fafb; border-left: 3px solid #3b82f6; padding: 0.75rem; margin-top: 0.5rem; font-size: 0.875rem; }
         .analysis strong { color: #1e40af; }
+        #map { height: 450px; border-radius: 0.5rem; }
+        .leaflet-popup-content { margin: 0.5rem; font-size: 0.8rem; }
+        .leaflet-popup-content strong { font-size: 0.9rem; }
       </style>
     </head>
     <body class="bg-gray-50 text-gray-900">
@@ -552,35 +561,86 @@ def index():
         <p class="text-sm text-gray-600 mb-4">Prospección para vendedor. Datos reales de Google Maps + web + redes.</p>
 
         <form id="form" class="bg-white border rounded p-3 space-y-2">
-          <input id="q" placeholder="Rubro + zona, ej: cafeterías en Haedo" class="w-full border rounded p-2" required />
+          <div class="flex gap-2">
+            <input id="q" placeholder="Rubro, ej: cafeterías" class="w-1/2 border rounded p-2" required />
+            <input id="near" placeholder="Zona, ej: Haedo" class="w-1/2 border rounded p-2" />
+          </div>
           <input id="token" type="password" placeholder="Token de acceso" class="w-full border rounded p-2 text-sm" required />
           <button type="submit" class="bg-black text-white px-4 py-2 rounded">Buscar</button>
         </form>
 
         <div id="status" class="text-sm mt-2 fade">Listo. Ingresá un rubro y buscá.</div>
-        <div id="results" class="mt-4"></div>
+
+        <div class="flex gap-4 mt-4">
+          <div id="results" class="w-1/2"></div>
+          <div id="map" class="w-1/2 sticky top-4" style="height:450px"></div>
+        </div>
       </div>
 
       <script>
+        let map = null;
+        let markers = [];
+
+        function initMap() {
+          map = L.map('map').setView([-34.61, -58.38], 12);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a>'
+          }).addTo(map);
+        }
+
+        function updateMap(leads) {
+          if (!map) initMap();
+          markers.forEach(m => map.removeLayer(m));
+          markers = [];
+
+          const bounds = [];
+          const hasCoords = leads.filter(l => l.latitude && l.longitude);
+          hasCoords.forEach(lead => {
+            const lat = parseFloat(lead.latitude);
+            const lng = parseFloat(lead.longitude);
+            if (isNaN(lat) || isNaN(lng)) return;
+            const popup = '<strong>' + escapeHtml(lead.name || '?') + '</strong><br>' +
+              (lead.rating ? '⭐ ' + lead.rating + ' (' + (lead.reviews_count || '?') + ')' : '') +
+              (lead.category ? '<br>' + escapeHtml(lead.category) : '');
+            const m = L.marker([lat, lng]).addTo(map).bindPopup(popup);
+            markers.push(m);
+            bounds.push([lat, lng]);
+          });
+
+          if (bounds.length > 0) {
+            map.fitBounds(bounds, { padding: [30, 30] });
+          } else {
+            map.setView([-34.61, -58.38], 12);
+          }
+        }
+
         const form = document.getElementById('form');
         const status = document.getElementById('status');
         const results = document.getElementById('results');
+        initMap();
 
         form.onsubmit = async (e) => {
           e.preventDefault();
           results.innerHTML = '';
           status.textContent = 'Buscando leads en Google Maps...';
           const token = document.getElementById('token').value || '';
+          const q = document.getElementById('q').value;
+          const near = document.getElementById('near').value;
+          const body = { query: q };
+          if (near) body.near = near;
           const res = await fetch('/search', {
             method:'POST',
             headers:{'Content-Type':'application/json','Authorization':'Bearer ' + token},
-            body:JSON.stringify({ query: document.getElementById('q').value })
+            body: JSON.stringify(body)
           });
           const init = await res.json();
           if (!res.ok) { status.textContent = 'Error: ' + JSON.stringify(init); return; }
           status.textContent = 'Leads: ' + (init.leads_count ?? 0) + ' | Cargando detalles...';
           const data = await fetch('/leads/' + init.search_id, { headers:{'Authorization':'Bearer ' + token} }).then(r => r.json());
           status.textContent = data.leads.length + ' leads encontrados';
+          updateMap(data.leads);
+
           const rows = await Promise.all(data.leads.map(async (lead, idx) => {
             const contact = [lead.phone, lead.telephone, lead.contact_phone].find(Boolean) || '';
             const address = lead.address || lead.location || '';
