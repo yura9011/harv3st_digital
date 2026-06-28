@@ -395,7 +395,7 @@
 
       const body = { query: q };
       if (near) body.near = near;
-      if (radius) body.radius_km = parseFloat(radius);
+      body.radius_km = parseFloat(radius) || 2;
       if (noCache) body.no_cache = true;
       console.log('[Pocket] POST /search body:', JSON.stringify(body));
 

@@ -56,12 +56,14 @@ async def search(body: SearchRequest, _token: str = Depends(require_auth)):
     leads = await _harv3st.poll_scored_data()
     scored = [_scoring_engine.score(lead or {}) for lead in (leads or [])]
 
-    if body.near and body.radius_km:
-        coords = await _geocode(body.near)
+    near = body.near
+    radius_km = body.radius_km or 2.0
+    if near and radius_km:
+        coords = await _geocode(near)
         if coords:
             before = len(scored)
-            scored = filter_by_distance(scored, coords[0], coords[1], body.radius_km)
-            log_event("geo_filter", search_id=search_id, near=body.near, radius_km=body.radius_km,
+            scored = filter_by_distance(scored, coords[0], coords[1], radius_km)
+            log_event("geo_filter", search_id=search_id, near=near, radius_km=radius_km,
                       before=before, after=len(scored), filtered=before - len(scored))
 
     elapsed_s = round(time.time() - t0, 1)
@@ -109,12 +111,14 @@ async def search_sync(body: SearchRequest, _token: str = Depends(require_auth)):
     leads = await _harv3st.poll_scored_data()
     scored = [_scoring_engine.score(lead or {}) for lead in (leads or [])]
 
-    if body.near and body.radius_km:
-        coords = await _geocode(body.near)
+    near = body.near
+    radius_km = body.radius_km or 2.0
+    if near and radius_km:
+        coords = await _geocode(near)
         if coords:
             before = len(scored)
-            scored = filter_by_distance(scored, coords[0], coords[1], body.radius_km)
-            log_event("geo_filter_sync", search_id=search_id, near=body.near, radius_km=body.radius_km,
+            scored = filter_by_distance(scored, coords[0], coords[1], radius_km)
+            log_event("geo_filter_sync", search_id=search_id, near=near, radius_km=radius_km,
                       before=before, after=len(scored), filtered=before - len(scored))
 
     elapsed_s = round(time.time() - t0, 1)
