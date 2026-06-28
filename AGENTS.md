@@ -53,14 +53,17 @@ tests/
 
 ## Endpoints
 
-| Endpoint | Método | Descripción |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/` | GET | Frontend HTML (estático) |
-| `/search` | POST | Inicia scraping + scoring |
-| `/leads/{search_id}` | GET | Resultados guardados |
-| `/analyze/{search_id}/{idx}` | POST | Análisis 360 de un lead |
-| `/export/{search_id}` | GET | Export texto plano |
+| Endpoint | Método | Auth | Descripción |
+|----------|--------|------|-------------|
+| `/health` | GET | No | Health check |
+| `/` | GET | No | Frontend HTML (estático) |
+| `/tools` | GET | No | Descubrimiento de capacidades (OpenAI function-calling) |
+| `/search` | POST | Sí | Inicia scraping + scoring (async, devuelve search_id) |
+| `/search/sync` | POST | Sí | Igual pero devuelve leads completos (bloqueante, para agentes) |
+| `/leads/{search_id}` | GET | Sí | Resultados guardados |
+| `/runs` | GET | Sí | Lista búsquedas anteriores (`?limit=20`) |
+| `/analyze/{search_id}/{idx}` | POST | Sí | Análisis 360 de un lead |
+| `/export/{search_id}` | GET | Sí | Export texto plano |
 
 ## Estado actual
 
@@ -73,7 +76,22 @@ tests/
 
 | Variable | Default | Descripción |
 |----------|---------|-------------|
-| `HARV3ST_URL` | `http://127.0.0.1:5050` | URL del scraper |
+| `HARV3ST_URL` | `http://127.0.0.1:5050` | URL del scraper (pocket_api) |
+
+## SearchRequest (body de POST /search y /search/sync)
+
+```json
+{
+  "query": "cafeterías",
+  "near": "Haedo, Buenos Aires",
+  "radius_km": 2,
+  "filters": {}
+}
+```
+
+- `query`: **requerido**. Rubro a buscar.
+- `near`: zona o ciudad. Si se pasa, Harv3st geocodifica vía Nominatim y centra el mapa.
+- `radius_km`: controla el zoom de Google Maps (se aproxima: 1 km ≈ zoom 15). Default en Harv3st: 2 km.
 | `POCKET_AUTH_TOKEN` | `changeme` | Token de acceso |
 | `OPENROUTER_API_KEY` | `""` | API key de OpenRouter (vacío = sin IA) |
 | `OPENROUTER_MODEL` | `mistralai/mistral-7b-instruct` | Modelo OpenRouter |

@@ -35,7 +35,7 @@ async def search(body: SearchRequest, _token: str = Depends(require_auth)):
     search_id = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
 
     try:
-        await _harv3st.start_search(body.query, body.near)
+        await _harv3st.start_search(body.query, body.near, body.radius_km)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Harv3st error: {e}")
 
@@ -52,6 +52,38 @@ async def search(body: SearchRequest, _token: str = Depends(require_auth)):
     }
     _storage.save(search_id, payload)
     return {"search_id": search_id, "leads_count": len(scored)}
+
+
+@router.get("/runs")
+def list_runs(limit: int = 20, _token: str = Depends(require_auth)):
+    return _storage.list(limit)
+
+
+@router.post("/search/sync")
+async def search_sync(body: SearchRequest, _token: str = Depends(require_auth)):
+    if not body.query or not str(body.query).strip():
+        raise HTTPException(status_code=400, detail="query requerido")
+
+    search_id = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+
+    try:
+        await _harv3st.start_search(body.query, body.near, body.radius_km)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Harv3st error: {e}")
+
+    leads = await _harv3st.poll_scored_data()
+    scored = [_scoring_engine.score(lead or {}) for lead in (leads or [])]
+
+    payload = {
+        "search_id": search_id,
+        "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "query": body.query,
+        "filters": body.filters or {},
+        "enriched": False,
+        "leads": scored,
+    }
+    _storage.save(search_id, payload)
+    return payload
 
 
 @router.get("/leads/{search_id}")

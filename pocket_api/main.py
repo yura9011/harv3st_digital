@@ -5,6 +5,7 @@ from fastapi.responses import HTMLResponse
 
 from pocket_api.api.auth import OPENROUTER_KEY, OPENROUTER_MODEL
 from pocket_api.api.routes import router, init_routes
+from pocket_api.api.tools import router as tools_router
 from pocket_api.domain.scoring import ScoringEngine
 from pocket_api.domain.analysis import AnalysisOrchestrator
 from pocket_api.adapters.harv3st import Harv3stClient
@@ -28,6 +29,7 @@ analysis = AnalysisOrchestrator(web_checker, instagram, openrouter)
 
 init_routes(harv3st, storage, scoring_engine, analysis)
 app.include_router(router)
+app.include_router(tools_router)
 
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 

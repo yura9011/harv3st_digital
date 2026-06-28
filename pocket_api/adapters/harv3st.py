@@ -5,10 +5,12 @@ class Harv3stClient:
     def __init__(self, base_url: str):
         self._base_url = base_url.rstrip("/")
 
-    async def start_search(self, query: str, near: str | None = None) -> dict:
+    async def start_search(self, query: str, near: str | None = None, radius_km: float | None = None) -> dict:
         payload = {"query": query}
         if near:
             payload["near"] = near
+        if radius_km is not None:
+            payload["radius_km"] = radius_km
         async with httpx.AsyncClient(timeout=180) as client:
             r = await client.post(f"{self._base_url}/api/search", json=payload)
             r.raise_for_status()

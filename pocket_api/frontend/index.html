@@ -22,8 +22,9 @@
 
     <form id="form" class="bg-white border rounded p-3 space-y-2">
       <div class="flex gap-2">
-        <input id="q" placeholder="Rubro, ej: cafeterías" class="w-1/2 border rounded p-2" required />
-        <input id="near" placeholder="Zona, ej: Haedo" class="w-1/2 border rounded p-2" />
+        <input id="q" placeholder="Rubro, ej: cafeterías" class="flex-1 border rounded p-2" required />
+        <input id="near" placeholder="Zona, ej: Haedo" class="flex-1 border rounded p-2" />
+        <input id="radius" type="number" min="0.5" max="50" step="0.5" placeholder="Radio km" class="w-24 border rounded p-2" />
       </div>
       <input id="token" type="password" placeholder="Token de acceso" class="w-full border rounded p-2 text-sm" required />
       <button type="submit" class="bg-black text-white px-4 py-2 rounded">Buscar</button>
@@ -87,8 +88,10 @@
       const token = document.getElementById('token').value || '';
       const q = document.getElementById('q').value;
       const near = document.getElementById('near').value;
+      const radius = document.getElementById('radius').value;
       const body = { query: q };
       if (near) body.near = near;
+      if (radius) body.radius_km = parseFloat(radius);
       const res = await fetch('/search', {
         method:'POST',
         headers:{'Content-Type':'application/json','Authorization':'Bearer ' + token},
