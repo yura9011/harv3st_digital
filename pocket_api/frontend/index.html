@@ -10,8 +10,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
     * { font-family: 'Space Grotesk', sans-serif; }
-    .analysis { background: #fafafa; border-left: 4px solid #D02020; padding: 0.75rem; margin-top: 0.5rem; font-size: 0.875rem; }
-    .analysis strong { color: #000; }
     #map { height: 450px; border: 2px solid #000; }
     .leaflet-popup-content { margin: 0.5rem; font-size: 0.8rem; }
     .leaflet-popup-content strong { font-size: 0.9rem; }
@@ -61,6 +59,11 @@
 
     <div id="stats-bar" class="hidden mt-4 grid grid-cols-4 gap-2"></div>
 
+    <div id="audit-bar" class="hidden mt-4 border-2 border-black p-3 flex items-center justify-between">
+      <span id="audit-count" class="text-sm font-bold">0 seleccionados</span>
+      <button id="audit-btn" class="bg-[#D02020] text-white px-4 py-2 border-2 border-black text-sm font-semibold uppercase tracking-wider hover:bg-black transition-colors">Auditar seleccionados</button>
+    </div>
+
     <div class="flex gap-4 mt-4">
       <div id="results" class="w-1/2"></div>
       <div id="map" class="w-1/2 sticky top-4"></div>
@@ -71,6 +74,10 @@
   <script>
     let map = null;
     let markers = [];
+    let selected = new Set();
+    let leadsData = [];
+    let currentSearchId = null;
+    let currentToken = 'changeme';
 
     function initMap() {
       if (map) return;
@@ -115,6 +122,22 @@
       document.getElementById('progress-text').textContent = t;
     }
 
+    function updateAuditBar() {
+      const bar = document.getElementById('audit-bar');
+      const count = selected.size;
+      document.getElementById('audit-count').textContent = count + ' seleccionados';
+      bar.classList.toggle('hidden', count === 0);
+    }
+
+    function toggleSelect(idx) {
+      if (selected.has(idx)) selected.delete(idx); else selected.add(idx);
+      updateAuditBar();
+      const cb = document.getElementById('cb-' + currentSearchId + '-' + idx);
+      if (cb) cb.checked = selected.has(idx);
+      const card = document.getElementById('card-' + currentSearchId + '-' + idx);
+      if (card) card.style.outline = selected.has(idx) ? '3px solid #D02020' : '';
+    }
+
     function renderStats(leads) {
       const total = leads.length;
       const withWeb = leads.filter(l => {
@@ -138,12 +161,52 @@
       items.forEach(item => {
         const d = document.createElement('div');
         d.className = 'border-2 border-black p-2 text-center';
-        d.innerHTML = `<div class="text-2xl font-bold">${item.val}</div><div class="text-xs uppercase tracking-wider">${item.label}</div>`;
+        d.innerHTML = '<div class="text-2xl font-bold">' + item.val + '</div><div class="text-xs uppercase tracking-wider">' + item.label + '</div>';
         bar.appendChild(d);
       });
     }
 
-    function renderLeadCard(lead, idx, searchId, token) {
+    function renderAuditResult(ana, container) {
+      let h = '';
+      if (ana.strengths && ana.strengths.length) h += '<div class="border-l-4 border-black pl-2 mt-2"><div class="text-xs font-bold uppercase tracking-wider">Fortalezas</div><div class="text-sm">' + escapeHtml(ana.strengths.join('; ')) + '</div></div>';
+      if (ana.weaknesses && ana.weaknesses.length) h += '<div class="border-l-4 border-black pl-2 mt-2"><div class="text-xs font-bold uppercase tracking-wider">Debilidades</div><div class="text-sm">' + escapeHtml(ana.weaknesses.join('; ')) + '</div></div>';
+      if (ana.opportunities && ana.opportunities.length) h += '<div class="border-l-4 border-black pl-2 mt-2"><div class="text-xs font-bold uppercase tracking-wider">Oportunidades</div><div class="text-sm">' + escapeHtml(ana.opportunities.join('; ')) + '</div></div>';
+      if (ana.sales_angle) h += '<div class="border-l-4 border-[#D02020] pl-2 mt-2"><div class="text-xs font-bold uppercase tracking-wider">Ángulo de venta</div><div class="text-sm">' + escapeHtml(ana.sales_angle) + '</div></div>';
+      if (ana.llm_analysis) h += '<div class="border-l-4 border-[#D02020] pl-2 mt-2"><div class="text-xs font-bold uppercase tracking-wider">Análisis IA</div><div class="text-sm mt-1" style="white-space:pre-wrap">' + escapeHtml(ana.llm_analysis) + '</div></div>';
+      container.innerHTML = h || '<div class="text-sm border-l-4 border-black pl-2 mt-2">Sin resultados de auditoría</div>';
+    }
+
+    function runAudit() {
+      const btn = document.getElementById('audit-btn');
+      btn.disabled = true;
+      btn.textContent = 'Auditando...';
+
+      let done = 0;
+      const total = selected.size;
+
+      selected.forEach(idx => {
+        const container = document.getElementById('audit-' + currentSearchId + '-' + idx);
+        if (!container) return;
+        container.innerHTML = '<span class="text-xs pulse-dot">▶ Auditando...</span>';
+
+        fetch('/analyze/' + currentSearchId + '/' + idx, {
+          headers: { 'Authorization': 'Bearer ' + currentToken }
+        }).then(r => r.json()).then(ana => {
+          renderAuditResult(ana, container);
+        }).catch(() => {
+          container.innerHTML = '<span class="text-xs text-[#D02020]">✕ Error en auditoría</span>';
+        }).finally(() => {
+          done++;
+          if (done >= total) {
+            btn.disabled = false;
+            btn.textContent = 'Auditar seleccionados';
+            document.getElementById('audit-count').textContent = total + ' auditados';
+          }
+        });
+      });
+    }
+
+    function renderLeadCard(lead, idx) {
       const contact = [lead.phone, lead.telephone, lead.contact_phone].find(Boolean) || '';
       const address = lead.address || lead.location || '';
       const website = lead.website_norm || lead.website || '';
@@ -154,7 +217,6 @@
       const hasWeb = website && !website.includes('search.google.com');
 
       const bestScore = Math.max(lead.web_score || 0, lead.gmb_score || 0, lead.whatsapp_score || 0, lead.erp_score || 0);
-      let scoreBadge = '<span class="border-2 border-black px-2 py-0.5 text-xs font-bold">' + bestScore + '</span>';
 
       const opportunity = [
         { key: 'Web', score: lead.web_score },
@@ -164,48 +226,28 @@
       ].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 2);
       const angles = opportunity.map(o => o.key + ' (' + (o.score ?? 0) + ')').join(' + ');
 
-      setTimeout(() => {
-        const cardEl = document.getElementById('card-' + searchId + '-' + idx);
-        if (!cardEl) return;
-        const container = cardEl.querySelector('.analysis-container');
-        if (!container) return;
-        fetch('/analyze/' + searchId + '/' + idx, {
-          headers: { 'Authorization': 'Bearer ' + token }
-        }).then(r => r.json()).then(ana => {
-          let h = '';
-          if (ana.strengths && ana.strengths.length) h += '<div class="analysis"><strong>Fortalezas:</strong> ' + escapeHtml(ana.strengths.join('; ')) + '</div>';
-          if (ana.weaknesses && ana.weaknesses.length) h += '<div class="analysis"><strong>Debilidades:</strong> ' + escapeHtml(ana.weaknesses.join('; ')) + '</div>';
-          if (ana.opportunities && ana.opportunities.length) h += '<div class="analysis"><strong>Oportunidades:</strong> ' + escapeHtml(ana.opportunities.join('; ')) + '</div>';
-          if (ana.sales_angle) h += '<div class="analysis" style="border-left-color:#000;"><strong>Ángulo de venta:</strong> ' + escapeHtml(ana.sales_angle) + '</div>';
-          if (ana.llm_analysis) h += '<div class="analysis" style="border-left-color:#D02020;"><strong>Análisis IA:</strong><pre style="white-space:pre-wrap;margin:0.5rem 0 0;font-family:inherit">' + escapeHtml(ana.llm_analysis) + '</pre></div>';
-          container.innerHTML = h || '<div class="analysis">Sin datos de análisis</div>';
-        }).catch(() => {
-          container.innerHTML = '<div class="analysis">Error al analizar</div>';
-        });
-      }, 300);
-
-      return `
-        <div id="card-${searchId}-${idx}" class="border-2 border-black p-4 mb-3 shadow-[4px_4px_0px_0px_#D02020]">
-          <div class="flex items-start justify-between gap-2">
-            <div class="w-full">
-              <div class="flex items-center gap-2">
-                <div class="font-bold text-lg">${escapeHtml(lead.name || 'Sin nombre')}</div>
-                ${scoreBadge}
-              </div>
-              <div class="text-sm mt-1">${escapeHtml(lead.category || '')}${address ? ' • ' + escapeHtml(address) : ''}</div>
-              <div class="text-sm mt-1 space-x-2">
-                ${contact ? '<span>📞 ' + escapeHtml(contact) + '</span>' : ''}
-                ${hasWeb ? '<span>🌐 <a href="' + website + '" target="_blank" rel="noreferrer" class="underline">web</a>' + (cms ? ' (' + escapeHtml(cms) + ')' : '') + '</span>' : '<span class="text-[#D02020]">✕ sin web</span>'}
-                ${lead.rating != null ? '<span>⭐ ' + lead.rating + ' (' + reviews + ')</span>' : ''}
-                ${ig ? '<span>📷 @' + escapeHtml(ig) + '</span>' : ''}
-                ${fb ? '<span>👍 ' + escapeHtml(fb) + '</span>' : ''}
-              </div>
-              <div class="text-sm mt-1">Oportunidad: <strong>${escapeHtml(angles || 'sin señal clara')}</strong></div>
-              <div class="analysis-container mt-1"><span class="text-xs text-gray-400 pulse-dot">▶ Analizando...</span></div>
-            </div>
-          </div>
-        </div>
-      `;
+      const sid = currentSearchId;
+      return '<div id="card-' + sid + '-' + idx + '" class="border-2 border-black p-4 mb-3">' +
+        '<div class="flex items-start gap-3">' +
+          '<input type="checkbox" id="cb-' + sid + '-' + idx + '" class="mt-1 w-5 h-5 cursor-pointer" onchange="toggleSelect(' + idx + ')">' +
+          '<div class="w-full">' +
+            '<div class="flex items-center gap-2">' +
+              '<div class="font-bold text-lg">' + escapeHtml(lead.name || 'Sin nombre') + '</div>' +
+              '<span class="border-2 border-black px-2 py-0.5 text-xs font-bold">' + bestScore + '</span>' +
+            '</div>' +
+            '<div class="text-sm mt-1">' + (lead.category ? escapeHtml(lead.category) + (address ? ' &bull; ' : '') : '') + escapeHtml(address) + '</div>' +
+            '<div class="text-sm mt-1 space-x-2">' +
+              (contact ? '<span>📞 ' + escapeHtml(contact) + '</span>' : '') +
+              (hasWeb ? '<span>🌐 <a href="' + website + '" target="_blank" rel="noreferrer" class="underline">web</a>' + (cms ? ' (' + escapeHtml(cms) + ')' : '') + '</span>' : '<span class="text-[#D02020]">✕ sin web</span>') +
+              (lead.rating != null ? '<span>⭐ ' + lead.rating + ' (' + reviews + ')</span>' : '') +
+              (ig ? '<span>📷 @' + escapeHtml(ig) + '</span>' : '') +
+              (fb ? '<span>👍 ' + escapeHtml(fb) + '</span>' : '') +
+            '</div>' +
+            '<div class="text-sm mt-1">Oportunidad: <strong>' + escapeHtml(angles || 'sin señal clara') + '</strong></div>' +
+            '<div id="audit-' + sid + '-' + idx + '" class="mt-2"></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
     }
 
     const form = document.getElementById('form');
@@ -214,16 +256,19 @@
     const tokenInput = document.getElementById('token');
     const savedToken = localStorage.getItem('pocket_token') || 'changeme';
     if (savedToken) tokenInput.value = savedToken;
+    document.getElementById('audit-btn').addEventListener('click', runAudit);
     initMap();
 
     form.onsubmit = async (e) => {
       e.preventDefault();
+      selected.clear();
+      updateAuditBar();
       results.innerHTML = '';
       document.getElementById('stats-bar').innerHTML = '';
       document.getElementById('stats-bar').classList.add('hidden');
 
-      const token = document.getElementById('token').value || 'changeme';
-      localStorage.setItem('pocket_token', token);
+      currentToken = document.getElementById('token').value || 'changeme';
+      localStorage.setItem('pocket_token', currentToken);
       const q = document.getElementById('q').value;
       const near = document.getElementById('near').value;
       const radius = document.getElementById('radius').value;
@@ -246,7 +291,7 @@
 
       const res = await fetch('/search', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + currentToken },
         body: JSON.stringify(body)
       });
       const init = await res.json();
@@ -261,21 +306,22 @@
       setProgressText('⚡ Cargando ' + (init.leads_count ?? 0) + ' resultados...');
 
       const data = await fetch('/leads/' + init.search_id, {
-        headers: { 'Authorization': 'Bearer ' + token }
+        headers: { 'Authorization': 'Bearer ' + currentToken }
       }).then(r => r.json());
 
       clearInterval(timer);
       showProgress(false);
       status.innerHTML = '<span class="font-bold">✅</span> ' + data.leads.length + ' leads encontrados en ' + elapsed + 's';
 
-      updateMap(data.leads);
-      renderStats(data.leads);
+      currentSearchId = init.search_id;
+      leadsData = data.leads;
+      updateMap(leadsData);
+      renderStats(leadsData);
 
-      const searchId = init.search_id;
-      const exportLink = '/export/' + searchId;
+      const exportLink = '/export/' + currentSearchId;
       const header = '<div class="flex justify-between items-center mb-3 border-b-2 border-black pb-2"><h2 class="text-xl font-bold uppercase">Resultados</h2><a href="' + exportLink + '" target="_blank" class="text-sm font-semibold underline">Exportar</a></div>';
 
-      const cards = data.leads.map((lead, idx) => renderLeadCard(lead, idx, searchId, token));
+      const cards = leadsData.map((lead, idx) => renderLeadCard(lead, idx));
       results.innerHTML = header + (cards.join('') || '<p class="text-sm border-2 border-black p-4">Sin resultados.</p>');
     };
 
