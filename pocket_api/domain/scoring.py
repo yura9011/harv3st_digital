@@ -1,16 +1,7 @@
 from abc import ABC, abstractmethod
 from urllib.parse import urlparse
 
-
-def _get(lead: dict, *keys):
-    for k in keys:
-        v = lead.get(k)
-        if v is not None:
-            if isinstance(v, str) and v.strip():
-                return v.strip()
-            if not isinstance(v, str):
-                return v
-    return None
+from pocket_api.domain.models import _get
 
 
 def _norm_url(u: str | None):

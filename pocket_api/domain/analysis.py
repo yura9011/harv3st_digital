@@ -1,3 +1,6 @@
+from pocket_api.domain.models import _get
+
+
 class AnalysisOrchestrator:
     def __init__(self, web_checker, instagram_enricher, openrouter_client=None):
         self._web_checker = web_checker
@@ -39,16 +42,6 @@ class AnalysisOrchestrator:
                 return v.strip()
         return None
 
-    def _get(self, lead: dict, *keys):
-        for k in keys:
-            v = lead.get(k)
-            if v is not None:
-                if isinstance(v, str) and v.strip():
-                    return v.strip()
-                if not isinstance(v, str):
-                    return v
-        return None
-
     def _build_llm_context(self, lead: dict, web_info, ig_handle, ig_data) -> dict:
         return {
             "name": lead.get("name"),
@@ -66,7 +59,7 @@ class AnalysisOrchestrator:
             "has_instagram": bool(ig_handle),
             "instagram_handle": ig_handle,
             "instagram_data": ig_data.get("data") if ig_data and ig_data.get("success") else {},
-            "has_facebook": bool(self._get(lead, "facebook", "social_facebook")),
+            "has_facebook": bool(_get(lead, "facebook", "social_facebook")),
             "reviews_sample": lead.get("reviews_sample", ""),
         }
 
