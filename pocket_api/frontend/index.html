@@ -86,6 +86,13 @@
 
     <div id="toast-area" class="fixed top-4 right-4 z-50 space-y-2 w-80"></div>
 
+    <details id="history-panel" class="mt-4 border-2 border-black">
+      <summary class="p-2 text-sm font-bold uppercase tracking-wider cursor-pointer select-none bg-white hover:bg-gray-100">
+        📋 Historial de búsquedas
+      </summary>
+      <div id="history-list" class="border-t-2 border-black max-h-48 overflow-y-auto"></div>
+    </details>
+
     <div class="flex gap-4 mt-4">
       <div id="results" class="w-1/2"></div>
       <div id="map" class="w-1/2 sticky top-4"></div>
@@ -358,7 +365,51 @@
     if (savedOrKey) { orKeyInput.value = savedOrKey; currentOrKey = savedOrKey; console.log('[Pocket] OpenRouter key restaurada'); }
     document.getElementById('audit-btn').addEventListener('click', runAudit);
     initMap();
+    loadHistory();
     console.log('[Pocket] App lista');
+
+    function loadRun(searchId) {
+      currentSearchId = searchId;
+      selected.clear();
+      updateAuditBar();
+      fetch('/leads/' + searchId, {
+        headers: { 'Authorization': 'Bearer ' + currentToken }
+      })
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(data => {
+          leadsData = data.leads || [];
+          status.innerHTML = '<span class="font-bold">✅</span> ' + leadsData.length + ' leads — <span class="text-xs font-mono">' + (data.query || '?') + (data.near ? ' en ' + data.near : '') + '</span>';
+          updateMap(leadsData);
+          renderStats(leadsData);
+          const exportLink = '/export/' + searchId;
+          const header = '<div class="flex justify-between items-center mb-3 border-b-2 border-black pb-2"><h2 class="text-xl font-bold uppercase">Resultados</h2><a href="' + exportLink + '" target="_blank" class="text-sm font-semibold underline">Exportar</a></div>';
+          const cards = leadsData.map((lead, idx) => renderLeadCard(lead, idx));
+          results.innerHTML = header + (cards.join('') || '<p class="text-sm border-2 border-black p-4">Sin resultados.</p>');
+          toast('Cargados ' + leadsData.length + ' leads de búsqueda anterior', 'info');
+        })
+        .catch(err => { toast('Error al cargar run: ' + err.message, 'err'); });
+    }
+
+    function loadHistory() {
+      fetch('/runs?limit=20', {
+        headers: { 'Authorization': 'Bearer ' + currentToken }
+      })
+        .then(r => r.json())
+        .then(runs => {
+          const list = document.getElementById('history-list');
+          if (!runs || !runs.length) {
+            list.innerHTML = '<div class="p-3 text-sm text-gray-500">Sin búsquedas anteriores.</div>';
+            return;
+          }
+          list.innerHTML = runs.map((r, i) =>
+            '<div class="border-b border-black last:border-b-0 flex items-center justify-between p-2 text-sm hover:bg-gray-50 cursor-pointer" onclick="loadRun(\'' + escapeHtml(r.search_id) + '\')">' +
+              '<span>' + escapeHtml(r.query || '?') + (r.near ? ' <span class="text-gray-500">en ' + escapeHtml(r.near) + '</span>' : '') + '</span>' +
+              '<span class="text-xs text-gray-500 font-mono">' + (r.leads_count || 0) + ' leads' + (r.leads_audited ? ' · ' + r.leads_audited + ' auditados' : '') + '</span>' +
+            '</div>'
+          ).join('');
+        })
+        .catch(() => {});
+    }
 
     form.onsubmit = async (e) => {
       e.preventDefault();
@@ -450,6 +501,7 @@
 
         const cards = leadsData.map((lead, idx) => renderLeadCard(lead, idx));
         results.innerHTML = header + (cards.join('') || '<p class="text-sm border-2 border-black p-4">Sin resultados.</p>');
+        loadHistory();
       } catch (err) {
         clearInterval(timer);
         showProgress(false);
