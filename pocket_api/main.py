@@ -13,11 +13,15 @@ from pocket_api.adapters.web_checker import WebChecker
 from pocket_api.adapters.instagram import InstagramEnricher
 from pocket_api.adapters.openrouter import OpenRouterClient
 from pocket_api.adapters.storage import FileRunRepository
+from pocket_api.adapters.logger import setup_logger
 
 app = FastAPI(title="FormaDigital Pocket")
 
 HARV3ST_URL = os.getenv("HARV3ST_URL", "http://127.0.0.1:5050")
 STATE_DIR = Path(os.getenv("POCKET_STATE_DIR", "/home/yura/formadigital_app/pocket/runs"))
+
+log = setup_logger(STATE_DIR)
+log.info(" Pocket API iniciando")
 
 harv3st = Harv3stClient(HARV3ST_URL)
 storage = FileRunRepository(STATE_DIR)

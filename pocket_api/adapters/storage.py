@@ -41,11 +41,16 @@ class FileRunRepository(RunRepository):
         for f in files[:limit]:
             try:
                 data = json.loads(f.read_text())
+                leads = data.get("leads", [])
+                audited = sum(1 for l in leads if l.get("analysis"))
                 result.append({
                     "search_id": data.get("search_id", f.stem),
                     "query": data.get("query", "?"),
+                    "near": data.get("near"),
                     "created_at": data.get("created_at", "?"),
-                    "leads_count": len(data.get("leads", [])),
+                    "duration_s": data.get("duration_s"),
+                    "leads_count": len(leads),
+                    "leads_audited": audited,
                     "enriched": data.get("enriched", False),
                 })
             except Exception:
