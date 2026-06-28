@@ -23,6 +23,8 @@
       50% { opacity: 1; }
     }
     .pulse-dot { animation: pulse-dot 1s infinite; }
+    .map-search-btn { background: white; border: 2px solid black; cursor: pointer; padding: 4px 8px; font-size: 16px; line-height: 1; }
+    .map-search-btn:hover { background: #D02020; color: white; border-color: #D02020; }
     @keyframes toast-in {
       0% { transform: translateX(100%); opacity: 0; }
       100% { transform: translateX(0); opacity: 1; }
@@ -109,6 +111,41 @@
         maxZoom: 19,
         attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a>'
       }).addTo(map);
+      setupMapSearch();
+    }
+
+    let radiusCircle = null;
+    function setupMapSearch() {
+      const btn = L.control({ position: 'topleft' });
+      btn.onAdd = function () {
+        const div = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+        div.innerHTML = '<button class="map-search-btn" title="Buscar en esta ubicación">📍</button>';
+        div.onclick = function () {
+          const c = map.getCenter();
+          document.getElementById('near').value = c.lat.toFixed(5) + ',' + c.lng.toFixed(5);
+          form.requestSubmit();
+        };
+        return div;
+      };
+      btn.addTo(map);
+
+      const rInput = document.getElementById('radius');
+      function drawCircle() {
+        const c = map.getCenter();
+        const r = (parseFloat(rInput.value) || 2) * 1000;
+        if (radiusCircle) map.removeLayer(radiusCircle);
+        radiusCircle = L.circle([c.lat, c.lng], {
+          radius: r,
+          color: '#D02020',
+          fillColor: '#D02020',
+          fillOpacity: 0.06,
+          weight: 2,
+          dashArray: '4, 6',
+        }).addTo(map);
+      }
+      map.on('moveend', drawCircle);
+      rInput.addEventListener('input', drawCircle);
+      setTimeout(drawCircle, 600);
     }
 
     function toast(msg, type) {
@@ -294,7 +331,7 @@
               '<div class="font-bold text-lg">' + escapeHtml(lead.name || 'Sin nombre') + '</div>' +
               '<span class="border-2 border-black px-2 py-0.5 text-xs font-bold">' + bestScore + '</span>' +
             '</div>' +
-            '<div class="text-sm mt-1">' + (lead.category ? escapeHtml(lead.category) + (address ? ' &bull; ' : '') : '') + escapeHtml(address) + '</div>' +
+            '<div class="text-sm mt-1">' + (lead.category ? escapeHtml(lead.category) + (address ? ' &bull; ' : '') : '') + escapeHtml(address) + (lead._distance_km ? ' <span class="text-xs font-mono">📍 ' + lead._distance_km + ' km</span>' : '') + '</div>' +
             '<div class="text-sm mt-1 space-x-2">' +
               (contact ? '<span>📞 ' + escapeHtml(contact) + '</span>' : '') +
               (hasWeb ? '<span>🌐 <a href="' + website + '" target="_blank" rel="noreferrer" class="underline">web</a>' + (cms ? ' (' + escapeHtml(cms) + ')' : '') + '</span>' : '<span class="text-[#D02020]">✕ sin web</span>') +
