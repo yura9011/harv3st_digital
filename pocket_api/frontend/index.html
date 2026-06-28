@@ -46,8 +46,18 @@
       </div>
       <div class="flex gap-2">
         <input id="token" type="password" placeholder="Token de acceso" class="flex-1 border-2 border-black p-2 text-sm" />
+        <label class="flex items-center gap-2 text-sm cursor-pointer select-none">
+          <input id="noCache" type="checkbox" class="w-4 h-4" />
+          Forzar nueva búsqueda
+        </label>
         <button type="submit" class="bg-black text-white px-6 py-2 border-2 border-black uppercase text-sm tracking-wider font-semibold hover:bg-[#D02020] hover:border-[#D02020] transition-colors">Buscar</button>
       </div>
+      <details class="text-sm cursor-pointer">
+        <summary class="text-xs uppercase tracking-wider text-gray-500">⚙ Configuración avanzada</summary>
+        <div class="mt-2 space-y-2 border-t-2 border-black pt-2">
+          <input id="orKey" type="password" placeholder="OpenRouter API Key (opcional — para análisis con IA)" class="w-full border-2 border-black p-2 text-sm" />
+        </div>
+      </details>
     </form>
 
     <div id="progress-area" class="hidden mt-4 border-2 border-black p-3">
@@ -89,6 +99,7 @@
     let leadsData = [];
     let currentSearchId = null;
     let currentToken = 'changeme';
+    let currentOrKey = '';
 
     function initMap() {
       if (map) return;
@@ -193,11 +204,12 @@
 
     function renderAuditResult(ana, container) {
       let h = '';
-      if (ana.strengths && ana.strengths.length) h += '<div class="border-l-4 border-black pl-2 mt-2"><div class="text-xs font-bold uppercase tracking-wider">Fortalezas</div><div class="text-sm">' + escapeHtml(ana.strengths.join('; ')) + '</div></div>';
+      const sourceBadge = ana.analysis_source === 'llm' ? '<span class="border-2 border-black px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ml-2">IA</span>' : '<span class="border-2 border-black px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ml-2">Reglas</span>';
+      if (ana.strengths && ana.strengths.length) h += '<div class="border-l-4 border-black pl-2 mt-2"><div class="text-xs font-bold uppercase tracking-wider">Fortalezas' + sourceBadge + '</div><div class="text-sm">' + escapeHtml(ana.strengths.join('; ')) + '</div></div>';
       if (ana.weaknesses && ana.weaknesses.length) h += '<div class="border-l-4 border-black pl-2 mt-2"><div class="text-xs font-bold uppercase tracking-wider">Debilidades</div><div class="text-sm">' + escapeHtml(ana.weaknesses.join('; ')) + '</div></div>';
       if (ana.opportunities && ana.opportunities.length) h += '<div class="border-l-4 border-black pl-2 mt-2"><div class="text-xs font-bold uppercase tracking-wider">Oportunidades</div><div class="text-sm">' + escapeHtml(ana.opportunities.join('; ')) + '</div></div>';
       if (ana.sales_angle) h += '<div class="border-l-4 border-[#D02020] pl-2 mt-2"><div class="text-xs font-bold uppercase tracking-wider">Ángulo de venta</div><div class="text-sm">' + escapeHtml(ana.sales_angle) + '</div></div>';
-      if (ana.llm_analysis) h += '<div class="border-l-4 border-[#D02020] pl-2 mt-2"><div class="text-xs font-bold uppercase tracking-wider">Análisis IA</div><div class="text-sm mt-1" style="white-space:pre-wrap">' + escapeHtml(ana.llm_analysis) + '</div></div>';
+      if (ana.llm_analysis) h += '<div class="border-l-4 border-[#D02020] pl-2 mt-2"><div class="text-xs font-bold uppercase tracking-wider">Análisis IA <span class="border-2 border-black px-1.5 py-0.5 text-[10px] font-bold">LLM</span></div><div class="text-sm mt-1" style="white-space:pre-wrap">' + escapeHtml(ana.llm_analysis) + '</div></div>';
       container.innerHTML = h || '<div class="text-sm border-l-4 border-black pl-2 mt-2">Sin resultados de auditoría</div>';
     }
 
@@ -221,9 +233,11 @@
         if (!container) { done++; return; }
         container.innerHTML = '<span class="text-xs pulse-dot">▶ Auditando...</span>';
 
+        const headers = { 'Authorization': 'Bearer ' + currentToken };
+        if (currentOrKey) headers['X-OpenRouter-Key'] = currentOrKey;
         fetch('/analyze/' + currentSearchId + '/' + idx, {
           method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + currentToken }
+          headers: headers
         })
         .then(r => {
           if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -299,8 +313,12 @@
     const status = document.getElementById('status');
     const results = document.getElementById('results');
     const tokenInput = document.getElementById('token');
+    const orKeyInput = document.getElementById('orKey');
+    const noCacheInput = document.getElementById('noCache');
     const savedToken = localStorage.getItem('pocket_token') || 'changeme';
     if (savedToken) { tokenInput.value = savedToken; console.log('[Pocket] Token restaurado de localStorage'); }
+    const savedOrKey = localStorage.getItem('pocket_or_key') || '';
+    if (savedOrKey) { orKeyInput.value = savedOrKey; currentOrKey = savedOrKey; console.log('[Pocket] OpenRouter key restaurada'); }
     document.getElementById('audit-btn').addEventListener('click', runAudit);
     initMap();
     console.log('[Pocket] App lista');
@@ -316,9 +334,13 @@
 
       currentToken = document.getElementById('token').value || 'changeme';
       localStorage.setItem('pocket_token', currentToken);
+      currentOrKey = document.getElementById('orKey').value.trim();
+      if (currentOrKey) localStorage.setItem('pocket_or_key', currentOrKey);
+      else localStorage.removeItem('pocket_or_key');
       const q = document.getElementById('q').value.trim();
       const near = document.getElementById('near').value.trim();
       const radius = document.getElementById('radius').value;
+      const noCache = document.getElementById('noCache').checked;
       const ctx = q + (near ? ' en ' + near : '');
 
       if (!q) { toast('Completá el rubro a buscar', 'err'); return; }
@@ -337,6 +359,7 @@
       const body = { query: q };
       if (near) body.near = near;
       if (radius) body.radius_km = parseFloat(radius);
+      if (noCache) body.no_cache = true;
       console.log('[Pocket] POST /search body:', JSON.stringify(body));
 
       try {
@@ -371,7 +394,8 @@
         showProgress(false);
 
         const leadCount = data.leads ? data.leads.length : 0;
-        status.innerHTML = '<span class="font-bold">✅</span> ' + leadCount + ' leads encontrados en ' + elapsed + 's';
+        const cachedTag = init.cached ? ' <span class="border-2 border-black px-1.5 py-0.5 text-[10px] font-bold uppercase">Cache</span>' : '';
+        status.innerHTML = '<span class="font-bold">✅</span> ' + leadCount + ' leads encontrados en ' + elapsed + 's' + cachedTag;
 
         if (leadCount === 0) {
           toast('No se encontraron leads para "' + ctx + '"', 'info');

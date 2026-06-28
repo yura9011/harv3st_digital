@@ -5,6 +5,7 @@ class SearchRequest(BaseModel):
     query: str
     near: str | None = None
     radius_km: float | None = None
+    no_cache: bool = False
     filters: dict | None = None
 
 

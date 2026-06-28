@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import json
+import time
 from pathlib import Path
 
 
@@ -12,6 +13,9 @@ class RunRepository(ABC):
 
     @abstractmethod
     def list(self, limit: int = 20) -> list[dict]: ...
+
+    @abstractmethod
+    def find_by_query(self, query: str, near: str | None, max_age_hours: int = 24) -> dict | None: ...
 
 
 class FileRunRepository(RunRepository):
@@ -47,3 +51,21 @@ class FileRunRepository(RunRepository):
             except Exception:
                 pass
         return result
+
+    def find_by_query(self, query: str, near: str | None, max_age_hours: int = 24) -> dict | None:
+        cutoff = time.time() - (max_age_hours * 3600)
+        for f in sorted(self._dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                data = json.loads(f.read_text())
+                if data.get("query") == query and data.get("near") == near:
+                    from datetime import datetime
+                    created_ts = data.get("created_at", "")
+                    try:
+                        dt = datetime.strptime(created_ts, "%Y-%m-%d %H:%M:%S")
+                        if dt.timestamp() >= cutoff:
+                            return data
+                    except Exception:
+                        return data
+            except Exception:
+                pass
+        return None

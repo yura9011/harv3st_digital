@@ -1,5 +1,5 @@
 from typing import Any
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from datetime import datetime
 
@@ -32,6 +32,11 @@ async def search(body: SearchRequest, _token: str = Depends(require_auth)):
     if not body.query or not str(body.query).strip():
         raise HTTPException(status_code=400, detail="query requerido")
 
+    if not body.no_cache:
+        cached = _storage.find_by_query(body.query, body.near)
+        if cached:
+            return {"search_id": cached["search_id"], "leads_count": len(cached.get("leads", [])), "cached": True}
+
     search_id = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
 
     try:
@@ -46,6 +51,7 @@ async def search(body: SearchRequest, _token: str = Depends(require_auth)):
         "search_id": search_id,
         "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
         "query": body.query,
+        "near": body.near,
         "filters": body.filters or {},
         "enriched": False,
         "leads": scored,
@@ -64,6 +70,11 @@ async def search_sync(body: SearchRequest, _token: str = Depends(require_auth)):
     if not body.query or not str(body.query).strip():
         raise HTTPException(status_code=400, detail="query requerido")
 
+    if not body.no_cache:
+        cached = _storage.find_by_query(body.query, body.near)
+        if cached:
+            return cached
+
     search_id = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
 
     try:
@@ -78,6 +89,7 @@ async def search_sync(body: SearchRequest, _token: str = Depends(require_auth)):
         "search_id": search_id,
         "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
         "query": body.query,
+        "near": body.near,
         "filters": body.filters or {},
         "enriched": False,
         "leads": scored,
@@ -95,7 +107,7 @@ def get_leads(search_id: str, _token: str = Depends(require_auth)):
 
 
 @router.post("/analyze/{search_id}/{idx}")
-async def analyze(search_id: str, idx: int, _token: str = Depends(require_auth)):
+async def analyze(search_id: str, idx: int, request: Request, _token: str = Depends(require_auth)):
     data = _storage.load(search_id)
     if data is None:
         raise HTTPException(status_code=404, detail="Search not found")
@@ -104,7 +116,8 @@ async def analyze(search_id: str, idx: int, _token: str = Depends(require_auth))
         raise HTTPException(status_code=404, detail="Lead index not found")
 
     lead = leads[idx]
-    result = await _analysis.analyze(lead)
+    or_key = request.headers.get("x-openrouter-key")
+    result = await _analysis.analyze(lead, openrouter_key=or_key)
 
     lead["analysis"] = result
     data["leads"][idx] = lead

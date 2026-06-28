@@ -7,7 +7,7 @@ class AnalysisOrchestrator:
         self._instagram = instagram_enricher
         self._openrouter = openrouter_client
 
-    async def analyze(self, lead: dict) -> dict:
+    async def analyze(self, lead: dict, openrouter_key: str | None = None) -> dict:
         web_info = None
         website = lead.get("website_norm") or lead.get("website")
         if website:
@@ -26,9 +26,14 @@ class AnalysisOrchestrator:
 
         result = self._heuristic_analysis(lead, web_info, ig_data)
 
-        if self._openrouter:
+        or_client = self._openrouter
+        if openrouter_key:
+            from pocket_api.adapters.openrouter import OpenRouterClient
+            or_client = OpenRouterClient(openrouter_key)
+
+        if or_client:
             context = self._build_llm_context(lead, web_info, ig_handle, ig_data)
-            llm_result = await self._openrouter.analyze(context)
+            llm_result = await or_client.analyze(context)
             if llm_result and not llm_result.startswith("Error"):
                 result["llm_analysis"] = llm_result
                 result["analysis_source"] = "llm"
