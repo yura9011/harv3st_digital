@@ -20,6 +20,11 @@
       100% { transform: translateX(400%); }
     }
     .bar-anim { animation: indeterminate 1.5s infinite ease-in-out; width: 33.333%; }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 1; }
+    }
+    .pulse-dot { animation: pulse-dot 1s infinite; }
   </style>
 </head>
 <body class="bg-white text-black">
@@ -37,7 +42,7 @@
         <input id="radius" type="number" min="0.5" max="50" step="0.5" placeholder="Radio km" class="w-24 border-2 border-black p-2 text-sm" />
       </div>
       <div class="flex gap-2">
-        <input id="token" type="password" placeholder="Token de acceso" class="flex-1 border-2 border-black p-2 text-sm" required />
+        <input id="token" type="password" placeholder="Token de acceso" class="flex-1 border-2 border-black p-2 text-sm" />
         <button type="submit" class="bg-black text-white px-6 py-2 border-2 border-black uppercase text-sm tracking-wider font-semibold hover:bg-[#D02020] hover:border-[#D02020] transition-colors">Buscar</button>
       </div>
     </form>
@@ -159,28 +164,25 @@
       ].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 2);
       const angles = opportunity.map(o => o.key + ' (' + (o.score ?? 0) + ')').join(' + ');
 
-      let analysisHtml = '';
-      fetch('/analyze/' + searchId + '/' + idx, {
-        headers: { 'Authorization': 'Bearer ' + token }
-      }).then(r => r.json()).then(ana => {
-        const card = document.getElementById('card-' + searchId + '-' + idx);
-        if (!card) return;
-        const container = card.querySelector('.analysis-container');
+      setTimeout(() => {
+        const cardEl = document.getElementById('card-' + searchId + '-' + idx);
+        if (!cardEl) return;
+        const container = cardEl.querySelector('.analysis-container');
         if (!container) return;
-        let h = '';
-        if (ana.strengths && ana.strengths.length) h += '<div class="analysis"><strong>Fortalezas:</strong> ' + escapeHtml(ana.strengths.join('; ')) + '</div>';
-        if (ana.weaknesses && ana.weaknesses.length) h += '<div class="analysis"><strong>Debilidades:</strong> ' + escapeHtml(ana.weaknesses.join('; ')) + '</div>';
-        if (ana.opportunities && ana.opportunities.length) h += '<div class="analysis"><strong>Oportunidades:</strong> ' + escapeHtml(ana.opportunities.join('; ')) + '</div>';
-        if (ana.sales_angle) h += '<div class="analysis" style="border-left-color:#000;"><strong>Ángulo de venta:</strong> ' + escapeHtml(ana.sales_angle) + '</div>';
-        if (ana.llm_analysis) h += '<div class="analysis" style="border-left-color:#D02020;"><strong>Análisis IA:</strong><pre style="white-space:pre-wrap;margin:0.5rem 0 0;font-family:inherit">' + escapeHtml(ana.llm_analysis) + '</pre></div>';
-        container.innerHTML = h || '<div class="analysis">Sin datos de análisis</div>';
-      }).catch(() => {
-        const card = document.getElementById('card-' + searchId + '-' + idx);
-        if (card) {
-          const container = card.querySelector('.analysis-container');
-          if (container) container.innerHTML = '<div class="analysis">Error al analizar</div>';
-        }
-      });
+        fetch('/analyze/' + searchId + '/' + idx, {
+          headers: { 'Authorization': 'Bearer ' + token }
+        }).then(r => r.json()).then(ana => {
+          let h = '';
+          if (ana.strengths && ana.strengths.length) h += '<div class="analysis"><strong>Fortalezas:</strong> ' + escapeHtml(ana.strengths.join('; ')) + '</div>';
+          if (ana.weaknesses && ana.weaknesses.length) h += '<div class="analysis"><strong>Debilidades:</strong> ' + escapeHtml(ana.weaknesses.join('; ')) + '</div>';
+          if (ana.opportunities && ana.opportunities.length) h += '<div class="analysis"><strong>Oportunidades:</strong> ' + escapeHtml(ana.opportunities.join('; ')) + '</div>';
+          if (ana.sales_angle) h += '<div class="analysis" style="border-left-color:#000;"><strong>Ángulo de venta:</strong> ' + escapeHtml(ana.sales_angle) + '</div>';
+          if (ana.llm_analysis) h += '<div class="analysis" style="border-left-color:#D02020;"><strong>Análisis IA:</strong><pre style="white-space:pre-wrap;margin:0.5rem 0 0;font-family:inherit">' + escapeHtml(ana.llm_analysis) + '</pre></div>';
+          container.innerHTML = h || '<div class="analysis">Sin datos de análisis</div>';
+        }).catch(() => {
+          container.innerHTML = '<div class="analysis">Error al analizar</div>';
+        });
+      }, 300);
 
       return `
         <div id="card-${searchId}-${idx}" class="border-2 border-black p-4 mb-3 shadow-[4px_4px_0px_0px_#D02020]">
@@ -199,7 +201,7 @@
                 ${fb ? '<span>👍 ' + escapeHtml(fb) + '</span>' : ''}
               </div>
               <div class="text-sm mt-1">Oportunidad: <strong>${escapeHtml(angles || 'sin señal clara')}</strong></div>
-              <div class="analysis-container mt-1"></div>
+              <div class="analysis-container mt-1"><span class="text-xs text-gray-400 pulse-dot">▶ Analizando...</span></div>
             </div>
           </div>
         </div>
@@ -209,6 +211,9 @@
     const form = document.getElementById('form');
     const status = document.getElementById('status');
     const results = document.getElementById('results');
+    const tokenInput = document.getElementById('token');
+    const savedToken = localStorage.getItem('pocket_token') || 'changeme';
+    if (savedToken) tokenInput.value = savedToken;
     initMap();
 
     form.onsubmit = async (e) => {
@@ -217,7 +222,8 @@
       document.getElementById('stats-bar').innerHTML = '';
       document.getElementById('stats-bar').classList.add('hidden');
 
-      const token = document.getElementById('token').value || '';
+      const token = document.getElementById('token').value || 'changeme';
+      localStorage.setItem('pocket_token', token);
       const q = document.getElementById('q').value;
       const near = document.getElementById('near').value;
       const radius = document.getElementById('radius').value;
