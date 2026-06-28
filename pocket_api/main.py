@@ -1,34 +1,18 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
 from datetime import datetime
 import httpx, os, json, asyncio, re
 from pathlib import Path
 from urllib.parse import urlparse
 
+from pocket_api.domain.models import SearchRequest
+from pocket_api.api.auth import require_auth, AUTH_TOKEN, OPENROUTER_KEY, OPENROUTER_MODEL
+
 app = FastAPI(title="FormaDigital Pocket")
 
 HARV3ST_URL = os.getenv("HARV3ST_URL", "http://127.0.0.1:5050")
-AUTH_TOKEN = os.getenv("POCKET_AUTH_TOKEN", "changeme")
-OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "mistralai/mistral-7b-instruct")
 STATE_DIR = Path("/home/yura/formadigital_app/pocket/runs")
 STATE_DIR.mkdir(parents=True, exist_ok=True)
-security = HTTPBearer(auto_error=False)
-
-
-class SearchRequest(BaseModel):
-    query: str
-    near: str | None = None
-    filters: dict | None = None
-
-
-async def require_auth(credentials: HTTPAuthorizationCredentials | None = Depends(security)):
-    token = (credentials.credentials if credentials and credentials.credentials else "").strip()
-    if not token or token != AUTH_TOKEN:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return token
 
 
 def _extract_leads(data):
@@ -535,171 +519,174 @@ def export(search_id: str, _token: str = Depends(require_auth)):
     return PlainTextResponse("\n".join(lines))
 
 
+FRONTEND_HTML = """
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>FormaDigital Pocket</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    .fade { opacity: .6; }
+    .analysis { background: #f9fafb; border-left: 3px solid #3b82f6; padding: 0.75rem; margin-top: 0.5rem; font-size: 0.875rem; }
+    .analysis strong { color: #1e40af; }
+    #map { height: 450px; border-radius: 0.5rem; }
+    .leaflet-popup-content { margin: 0.5rem; font-size: 0.8rem; }
+    .leaflet-popup-content strong { font-size: 0.9rem; }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-900">
+  <div class="max-w-6xl mx-auto p-4">
+    <h1 class="text-2xl font-bold mb-1">FormaDigital Pocket</h1>
+    <p class="text-sm text-gray-600 mb-4">Prospección para vendedor. Datos reales de Google Maps + web + redes.</p>
+
+    <form id="form" class="bg-white border rounded p-3 space-y-2">
+      <div class="flex gap-2">
+        <input id="q" placeholder="Rubro, ej: cafeterías" class="w-1/2 border rounded p-2" required />
+        <input id="near" placeholder="Zona, ej: Haedo" class="w-1/2 border rounded p-2" />
+      </div>
+      <input id="token" type="password" placeholder="Token de acceso" class="w-full border rounded p-2 text-sm" required />
+      <button type="submit" class="bg-black text-white px-4 py-2 rounded">Buscar</button>
+    </form>
+
+    <div id="status" class="text-sm mt-2 fade">Listo. Ingresá un rubro y buscá.</div>
+
+    <div class="flex gap-4 mt-4">
+      <div id="results" class="w-1/2"></div>
+      <div id="map" class="w-1/2 sticky top-4" style="height:450px"></div>
+    </div>
+  </div>
+
+  <script>
+    let map = null;
+    let markers = [];
+
+    function initMap() {
+      map = L.map('map').setView([-34.61, -58.38], 12);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a>'
+      }).addTo(map);
+    }
+
+    function updateMap(leads) {
+      if (!map) initMap();
+      markers.forEach(m => map.removeLayer(m));
+      markers = [];
+
+      const bounds = [];
+      const hasCoords = leads.filter(l => l.latitude && l.longitude);
+      hasCoords.forEach(lead => {
+        const lat = parseFloat(lead.latitude);
+        const lng = parseFloat(lead.longitude);
+        if (isNaN(lat) || isNaN(lng)) return;
+        const popup = '<strong>' + escapeHtml(lead.name || '?') + '</strong><br>' +
+          (lead.rating ? '⭐ ' + lead.rating + ' (' + (lead.reviews_count || '?') + ')' : '') +
+          (lead.category ? '<br>' + escapeHtml(lead.category) : '');
+        const m = L.marker([lat, lng]).addTo(map).bindPopup(popup);
+        markers.push(m);
+        bounds.push([lat, lng]);
+      });
+
+      if (bounds.length > 0) {
+        map.fitBounds(bounds, { padding: [30, 30] });
+      } else {
+        map.setView([-34.61, -58.38], 12);
+      }
+    }
+
+    const form = document.getElementById('form');
+    const status = document.getElementById('status');
+    const results = document.getElementById('results');
+    initMap();
+
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      results.innerHTML = '';
+      status.textContent = 'Buscando leads en Google Maps...';
+      const token = document.getElementById('token').value || '';
+      const q = document.getElementById('q').value;
+      const near = document.getElementById('near').value;
+      const body = { query: q };
+      if (near) body.near = near;
+      const res = await fetch('/search', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer ' + token},
+        body: JSON.stringify(body)
+      });
+      const init = await res.json();
+      if (!res.ok) { status.textContent = 'Error: ' + JSON.stringify(init); return; }
+      status.textContent = 'Leads: ' + (init.leads_count ?? 0) + ' | Cargando detalles...';
+      const data = await fetch('/leads/' + init.search_id, { headers:{'Authorization':'Bearer ' + token} }).then(r => r.json());
+      status.textContent = data.leads.length + ' leads encontrados';
+      updateMap(data.leads);
+
+      const rows = await Promise.all(data.leads.map(async (lead, idx) => {
+        const contact = [lead.phone, lead.telephone, lead.contact_phone].find(Boolean) || '';
+        const address = lead.address || lead.location || '';
+        const website = lead.website_norm || lead.website || '';
+        const reviews = lead.reviews_count != null ? lead.reviews_count : '?';
+        const cms = lead.cms || '';
+        const ig = lead.instagram || '';
+        const fb = lead.facebook || '';
+
+        let analysisHtml = '';
+        try {
+          const ana = await fetch('/analyze/' + init.search_id + '/' + idx, {
+            headers:{'Authorization':'Bearer ' + token}
+          }).then(r => r.json());
+          if (ana.strengths && ana.strengths.length) {
+            analysisHtml += '<div class="analysis"><strong>Fortalezas:</strong> ' + escapeHtml(ana.strengths.join('; ')) + '</div>';
+          }
+          if (ana.weaknesses && ana.weaknesses.length) {
+            analysisHtml += '<div class="analysis"><strong>Debilidades:</strong> ' + escapeHtml(ana.weaknesses.join('; ')) + '</div>';
+          }
+          if (ana.opportunities && ana.opportunities.length) {
+            analysisHtml += '<div class="analysis"><strong>Oportunidades:</strong> ' + escapeHtml(ana.opportunities.join('; ')) + '</div>';
+          }
+          if (ana.sales_angle) {
+            analysisHtml += '<div class="analysis" style="border-left-color: #059669;"><strong>Angulo de venta:</strong> ' + escapeHtml(ana.sales_angle) + '</div>';
+          }
+          if (ana.llm_analysis) {
+            analysisHtml += '<div class="analysis" style="border-left-color: #8b5cf6;"><strong>Análisis IA:</strong><pre style="white-space:pre-wrap;margin:0.5rem 0 0">' + escapeHtml(ana.llm_analysis) + '</pre></div>';
+          }
+        } catch(e) { analysisHtml = '<div class="analysis fade">Error al analizar</div>'; }
+
+        const opportunity = [
+          { key: 'Web', score: lead.web_score },
+          { key: 'GMB', score: lead.gmb_score },
+          { key: 'WhatsApp', score: lead.whatsapp_score },
+          { key: 'ERP', score: lead.erp_score },
+        ].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 2);
+        const angles = opportunity.map(o => o.key + ' (' + (o.score ?? 0) + ')').join(' + ');
+
+        return `
+          <div class="bg-white border rounded p-3 mb-2">
+            <div class="flex items-start justify-between">
+              <div class="w-full">
+                <div class="font-semibold text-lg">${escapeHtml(lead.name || 'Sin nombre')}</div>
+                <div class="text-sm text-gray-600">${escapeHtml(lead.category || '')}${address ? ' • ' + escapeHtml(address) : ''}</div>
+                <div class="text-sm">${contact ? '📞 ' + escapeHtml(contact) + ' ' : ''}${website ? '🌐 <a href="${website}" target="_blank" rel="noreferrer">${escapeHtml(website)}</a>' + (cms ? ' (' + escapeHtml(cms) + ')' : '') + ' ' : ''}⭐ ${lead.rating != null ? lead.rating + ' (' + reviews + ' reseñas)' : 'sin rating'}${ig ? ' 📷 @' + escapeHtml(ig) : ''}${fb ? ' 👍 ' + escapeHtml(fb) : ''}</div>
+                <div class="text-sm mt-1">Oportunidad: <strong>${escapeHtml(angles || 'sin señal clara')}</strong></div>
+                ${analysisHtml}
+              </div>
+            </div>
+          </div>
+        `;
+      }));
+      const exportLink = '/export/' + init.search_id;
+      results.innerHTML = '<div class="flex justify-between items-center mb-2"><h2 class="text-xl font-semibold">Resultados</h2><a href="' + exportLink + '" target="_blank" class="text-sm text-blue-600 underline">Exportar texto</a></div>' + (rows.join('') || '<p class="text-sm">Sin resultados.</p>');
+    };
+
+    function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[m]); }
+  </script>
+</body>
+</html>
+"""
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return """
-    <!DOCTYPE html>
-    <html lang="es">
-    <head>
-      <meta charset="utf-8">
-      <title>FormaDigital Pocket</title>
-      <script src="https://cdn.tailwindcss.com"></script>
-      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-      <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-      <style>
-        .fade { opacity: .6; }
-        .analysis { background: #f9fafb; border-left: 3px solid #3b82f6; padding: 0.75rem; margin-top: 0.5rem; font-size: 0.875rem; }
-        .analysis strong { color: #1e40af; }
-        #map { height: 450px; border-radius: 0.5rem; }
-        .leaflet-popup-content { margin: 0.5rem; font-size: 0.8rem; }
-        .leaflet-popup-content strong { font-size: 0.9rem; }
-      </style>
-    </head>
-    <body class="bg-gray-50 text-gray-900">
-      <div class="max-w-6xl mx-auto p-4">
-        <h1 class="text-2xl font-bold mb-1">FormaDigital Pocket</h1>
-        <p class="text-sm text-gray-600 mb-4">Prospección para vendedor. Datos reales de Google Maps + web + redes.</p>
-
-        <form id="form" class="bg-white border rounded p-3 space-y-2">
-          <div class="flex gap-2">
-            <input id="q" placeholder="Rubro, ej: cafeterías" class="w-1/2 border rounded p-2" required />
-            <input id="near" placeholder="Zona, ej: Haedo" class="w-1/2 border rounded p-2" />
-          </div>
-          <input id="token" type="password" placeholder="Token de acceso" class="w-full border rounded p-2 text-sm" required />
-          <button type="submit" class="bg-black text-white px-4 py-2 rounded">Buscar</button>
-        </form>
-
-        <div id="status" class="text-sm mt-2 fade">Listo. Ingresá un rubro y buscá.</div>
-
-        <div class="flex gap-4 mt-4">
-          <div id="results" class="w-1/2"></div>
-          <div id="map" class="w-1/2 sticky top-4" style="height:450px"></div>
-        </div>
-      </div>
-
-      <script>
-        let map = null;
-        let markers = [];
-
-        function initMap() {
-          map = L.map('map').setView([-34.61, -58.38], 12);
-          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a>'
-          }).addTo(map);
-        }
-
-        function updateMap(leads) {
-          if (!map) initMap();
-          markers.forEach(m => map.removeLayer(m));
-          markers = [];
-
-          const bounds = [];
-          const hasCoords = leads.filter(l => l.latitude && l.longitude);
-          hasCoords.forEach(lead => {
-            const lat = parseFloat(lead.latitude);
-            const lng = parseFloat(lead.longitude);
-            if (isNaN(lat) || isNaN(lng)) return;
-            const popup = '<strong>' + escapeHtml(lead.name || '?') + '</strong><br>' +
-              (lead.rating ? '⭐ ' + lead.rating + ' (' + (lead.reviews_count || '?') + ')' : '') +
-              (lead.category ? '<br>' + escapeHtml(lead.category) : '');
-            const m = L.marker([lat, lng]).addTo(map).bindPopup(popup);
-            markers.push(m);
-            bounds.push([lat, lng]);
-          });
-
-          if (bounds.length > 0) {
-            map.fitBounds(bounds, { padding: [30, 30] });
-          } else {
-            map.setView([-34.61, -58.38], 12);
-          }
-        }
-
-        const form = document.getElementById('form');
-        const status = document.getElementById('status');
-        const results = document.getElementById('results');
-        initMap();
-
-        form.onsubmit = async (e) => {
-          e.preventDefault();
-          results.innerHTML = '';
-          status.textContent = 'Buscando leads en Google Maps...';
-          const token = document.getElementById('token').value || '';
-          const q = document.getElementById('q').value;
-          const near = document.getElementById('near').value;
-          const body = { query: q };
-          if (near) body.near = near;
-          const res = await fetch('/search', {
-            method:'POST',
-            headers:{'Content-Type':'application/json','Authorization':'Bearer ' + token},
-            body: JSON.stringify(body)
-          });
-          const init = await res.json();
-          if (!res.ok) { status.textContent = 'Error: ' + JSON.stringify(init); return; }
-          status.textContent = 'Leads: ' + (init.leads_count ?? 0) + ' | Cargando detalles...';
-          const data = await fetch('/leads/' + init.search_id, { headers:{'Authorization':'Bearer ' + token} }).then(r => r.json());
-          status.textContent = data.leads.length + ' leads encontrados';
-          updateMap(data.leads);
-
-          const rows = await Promise.all(data.leads.map(async (lead, idx) => {
-            const contact = [lead.phone, lead.telephone, lead.contact_phone].find(Boolean) || '';
-            const address = lead.address || lead.location || '';
-            const website = lead.website_norm || lead.website || '';
-            const reviews = lead.reviews_count != null ? lead.reviews_count : '?';
-            const cms = lead.cms || '';
-            const ig = lead.instagram || '';
-            const fb = lead.facebook || '';
-
-            let analysisHtml = '';
-            try {
-              const ana = await fetch('/analyze/' + init.search_id + '/' + idx, {
-                headers:{'Authorization':'Bearer ' + token}
-              }).then(r => r.json());
-              if (ana.strengths && ana.strengths.length) {
-                analysisHtml += '<div class="analysis"><strong>Fortalezas:</strong> ' + escapeHtml(ana.strengths.join('; ')) + '</div>';
-              }
-              if (ana.weaknesses && ana.weaknesses.length) {
-                analysisHtml += '<div class="analysis"><strong>Debilidades:</strong> ' + escapeHtml(ana.weaknesses.join('; ')) + '</div>';
-              }
-              if (ana.opportunities && ana.opportunities.length) {
-                analysisHtml += '<div class="analysis"><strong>Oportunidades:</strong> ' + escapeHtml(ana.opportunities.join('; ')) + '</div>';
-              }
-              if (ana.sales_angle) {
-                analysisHtml += '<div class="analysis" style="border-left-color: #059669;"><strong>Angulo de venta:</strong> ' + escapeHtml(ana.sales_angle) + '</div>';
-              }
-              if (ana.llm_analysis) {
-                analysisHtml += '<div class="analysis" style="border-left-color: #8b5cf6;"><strong>Análisis IA:</strong><pre style="white-space:pre-wrap;margin:0.5rem 0 0">' + escapeHtml(ana.llm_analysis) + '</pre></div>';
-              }
-            } catch(e) { analysisHtml = '<div class="analysis fade">Error al analizar</div>'; }
-
-            const opportunity = [
-              { key: 'Web', score: lead.web_score },
-              { key: 'GMB', score: lead.gmb_score },
-              { key: 'WhatsApp', score: lead.whatsapp_score },
-              { key: 'ERP', score: lead.erp_score },
-            ].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 2);
-            const angles = opportunity.map(o => o.key + ' (' + (o.score ?? 0) + ')').join(' + ');
-
-            return `
-              <div class="bg-white border rounded p-3 mb-2">
-                <div class="flex items-start justify-between">
-                  <div class="w-full">
-                    <div class="font-semibold text-lg">${escapeHtml(lead.name || 'Sin nombre')}</div>
-                    <div class="text-sm text-gray-600">${escapeHtml(lead.category || '')}${address ? ' • ' + escapeHtml(address) : ''}</div>
-                    <div class="text-sm">${contact ? '📞 ' + escapeHtml(contact) + ' ' : ''}${website ? '🌐 <a href="${website}" target="_blank" rel="noreferrer">${escapeHtml(website)}</a>' + (cms ? ' (' + escapeHtml(cms) + ')' : '') + ' ' : ''}⭐ ${lead.rating != null ? lead.rating + ' (' + reviews + ' reseñas)' : 'sin rating'}${ig ? ' 📷 @' + escapeHtml(ig) : ''}${fb ? ' 👍 ' + escapeHtml(fb) : ''}</div>
-                    <div class="text-sm mt-1">Oportunidad: <strong>${escapeHtml(angles || 'sin señal clara')}</strong></div>
-                    ${analysisHtml}
-                  </div>
-                </div>
-              </div>
-            `;
-          }));
-          const exportLink = '/export/' + init.search_id;
-          results.innerHTML = '<div class="flex justify-between items-center mb-2"><h2 class="text-xl font-semibold">Resultados</h2><a href="' + exportLink + '" target="_blank" class="text-sm text-blue-600 underline">Exportar texto</a></div>' + (rows.join('') || '<p class="text-sm">Sin resultados.</p>');
-        };
-
-        function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[m]); }
-      </script>
-    </body>
-    </html>
-    """
+    return FRONTEND_HTML
